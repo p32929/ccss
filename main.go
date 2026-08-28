@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ const (
 	viewPastePath
 	viewSessions
 	viewConversation
+	viewNoSessionsHere // asked when the folder you launched from has no history
 )
 
 // ---------- styles ----------
@@ -115,6 +117,7 @@ type model struct {
 	loadWhat string
 	status   string // transient one-line feedback (e.g. "copied ✓")
 
+	launchDir   string    // the directory the app was started in
 	curProjects []Project // raw projects, kept so we can re-sort
 	curProject  Project
 	curSession  Session
@@ -199,7 +202,31 @@ func newModel() model {
 		sortMode:   loadSortMode(),
 		projSort:   loadProjectSort(),
 	}
+	if wd, err := os.Getwd(); err == nil {
+		m.launchDir = wd
+	}
 	return m
+}
+
+// projectForDir finds the loaded project matching a directory. The encoded
+// folder name is matched first; the cwd recorded inside the session files is
+// the fallback, because the encoding is lossy and cannot be reversed reliably.
+func (m model) projectForDir(dir string) (Project, bool) {
+	if dir == "" {
+		return Project{}, false
+	}
+	enc := encodePath(dir)
+	for _, p := range m.curProjects {
+		if filepath.Base(p.EncodedDir) == enc {
+			return p, true
+		}
+	}
+	for _, p := range m.curProjects {
+		if p.RealPath == dir {
+			return p, true
+		}
+	}
+	return Project{}, false
 }
 
 func (m model) Init() tea.Cmd {
@@ -303,6 +330,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.curProjects = msg.projects
 		m.applyProjectSort()
+		// Launched from a folder Claude Code has history for? Go straight to it —
+		// that is almost always the session you came for. Otherwise ask, rather
+		// than dumping a list of every project you have ever worked on.
+		if p, ok := m.projectForDir(m.launchDir); ok {
+			return m, m.startLoad("Loading sessions", loadSessionsCmd(p))
+		}
+		m.state = viewNoSessionsHere
 		return m, nil
 
 	case sessionsLoadedMsg:
@@ -400,6 +434,19 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.projList, cmd = m.projList.Update(msg)
 		return m, cmd
+
+	case viewNoSessionsHere:
+		switch msg.String() {
+		case "y", "Y", "enter":
+			m.state = viewProjects
+			m.status = ""
+			return m, nil
+		case "n", "N", "q", "esc":
+			return m, tea.Quit
+		}
+		// Anything else is ignored: this is a question, not a confirmation, so a
+		// stray key should not silently close the app.
+		return m, nil
 
 	case viewPastePath:
 		switch msg.String() {
@@ -585,6 +632,8 @@ func (m model) screenBody() string {
 	switch m.state {
 	case viewProjects:
 		return m.viewProjectsRender()
+	case viewNoSessionsHere:
+		return m.viewNoSessionsRender()
 	case viewPastePath:
 		return m.viewPastePathRender()
 	case viewSessions:
@@ -1257,4 +1306,26 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// viewNoSessionsRender is the first thing you see when you run ccss somewhere
+// Claude Code has never been used. Offering the full list beats both dumping it
+// unasked and exiting with an error.
+func (m model) viewNoSessionsRender() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("No Claude Code sessions here") + "\n\n")
+	b.WriteString(pad.Render(labelStyle.Render("folder  ")+valueStyle.Render(orDash(m.launchDir))) + "\n")
+	b.WriteString(pad.Render(dimStyle.Render("Claude Code has no history for this folder.")) + "\n\n")
+
+	if n := len(m.curProjects); n > 0 {
+		b.WriteString(pad.Render(fmt.Sprintf("Show all %s instead?  (%s on disk)",
+			plural(n, "project"), humanSize(TotalProjectSize(m.curProjects)))) + "\n")
+	} else {
+		b.WriteString(pad.Render(dimStyle.Render("There are no Claude Code sessions anywhere on this machine yet.")) + "\n")
+	}
+	b.WriteString("\n" + footerStyle.Render(m.fitKeys(
+		"y show all projects · n quit · esc quit",
+		"y all · n quit",
+	)))
+	return b.String()
 }

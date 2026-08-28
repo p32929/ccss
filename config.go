@@ -15,28 +15,40 @@ type config struct {
 	ProjectSortMode string `json:"projectSortMode"`
 }
 
-// configPath returns ~/.config/ccsessions/config.json
+// appName is the config directory name, and the name of the binary.
+const appName = "ccss"
+
+// legacyAppName is what the app was called before. Settings saved under it are
+// still read, so renaming the binary does not silently reset your preferences.
+const legacyAppName = "ccsessions"
+
+// configPath returns ~/.config/ccss/config.json
 func configPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "ccsessions", "config.json"), nil
+	return filepath.Join(dir, appName, "config.json"), nil
 }
 
-// loadConfig reads the persisted config. A missing/invalid file is not an
-// error: it just means "use defaults".
+// loadConfig reads the persisted config, falling back to the pre-rename
+// location. A missing/invalid file is not an error: it just means "use
+// defaults". The next save writes to the new path, so the old one is read at
+// most until the first preference change.
 func loadConfig() config {
 	var c config
-	path, err := configPath()
+	dir, err := os.UserConfigDir()
 	if err != nil {
 		return c
 	}
-	data, err := os.ReadFile(path)
-	if err != nil {
+	for _, name := range []string{appName, legacyAppName} {
+		data, readErr := os.ReadFile(filepath.Join(dir, name, "config.json"))
+		if readErr != nil {
+			continue
+		}
+		_ = json.Unmarshal(data, &c)
 		return c
 	}
-	_ = json.Unmarshal(data, &c)
 	return c
 }
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build then run the ccsessions TUI. Always builds first.
+# Build then run the ccss TUI. Always builds first.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-echo "Building ccsessions…"
-go build -o ccsessions .
+echo "Building ccss…"
+go build -o ccss .
 
 echo "Starting…"
-exec ./ccsessions "$@"
+exec ./ccss "$@"

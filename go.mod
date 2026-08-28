@@ -1,4 +1,4 @@
-module ccsessions
+module github.com/p32929/ccss
 
 go 1.26.1
 
