@@ -32,7 +32,7 @@ const (
 	viewPastePath
 	viewSessions
 	viewConversation
-	viewNoSessionsHere // asked when the folder you launched from has no history
+	viewStart // the chooser shown on launch: this folder, or everything
 )
 
 // ---------- styles ----------
@@ -118,6 +118,8 @@ type model struct {
 	status   string // transient one-line feedback (e.g. "copied ✓")
 
 	launchDir   string    // the directory the app was started in
+	launchProj  Project   // that directory's project, when it has one
+	hasLaunch   bool      // whether launchProj is set
 	curProjects []Project // raw projects, kept so we can re-sort
 	curProject  Project
 	curSession  Session
@@ -330,13 +332,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.curProjects = msg.projects
 		m.applyProjectSort()
-		// Launched from a folder Claude Code has history for? Go straight to it —
-		// that is almost always the session you came for. Otherwise ask, rather
-		// than dumping a list of every project you have ever worked on.
-		if p, ok := m.projectForDir(m.launchDir); ok {
-			return m, m.startLoad("Loading sessions", loadSessionsCmd(p))
-		}
-		m.state = viewNoSessionsHere
+		// Always ask where to start. Guessing would be wrong often enough to be
+		// annoying, and the answer costs one keystroke.
+		m.launchProj, m.hasLaunch = m.projectForDir(m.launchDir)
+		m.state = viewStart
 		return m, nil
 
 	case sessionsLoadedMsg:
@@ -435,13 +434,27 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.projList, cmd = m.projList.Update(msg)
 		return m, cmd
 
-	case viewNoSessionsHere:
+	case viewStart:
 		switch msg.String() {
-		case "y", "Y", "enter":
+		case "t", "T":
+			if m.hasLaunch {
+				return m, m.startLoad("Loading sessions", loadSessionsCmd(m.launchProj))
+			}
+			return m, nil // nothing to open; leave the chooser up
+		case "a", "A":
 			m.state = viewProjects
 			m.status = ""
 			return m, nil
-		case "n", "N", "q", "esc":
+		case "enter":
+			// Enter takes the obvious option: this folder when it has history,
+			// otherwise the only other thing worth showing.
+			if m.hasLaunch {
+				return m, m.startLoad("Loading sessions", loadSessionsCmd(m.launchProj))
+			}
+			m.state = viewProjects
+			m.status = ""
+			return m, nil
+		case "q", "esc":
 			return m, tea.Quit
 		}
 		// Anything else is ignored: this is a question, not a confirmation, so a
@@ -632,8 +645,8 @@ func (m model) screenBody() string {
 	switch m.state {
 	case viewProjects:
 		return m.viewProjectsRender()
-	case viewNoSessionsHere:
-		return m.viewNoSessionsRender()
+	case viewStart:
+		return m.viewStartRender()
 	case viewPastePath:
 		return m.viewPastePathRender()
 	case viewSessions:
@@ -1308,24 +1321,43 @@ func main() {
 	}
 }
 
-// viewNoSessionsRender is the first thing you see when you run ccss somewhere
-// Claude Code has never been used. Offering the full list beats both dumping it
-// unasked and exiting with an error.
-func (m model) viewNoSessionsRender() string {
+// viewStartRender is the chooser shown on launch. It always asks rather than
+// guessing, and it says plainly when the folder you are in has no history —
+// that absence is information, not an error.
+func (m model) viewStartRender() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("No Claude Code sessions here") + "\n\n")
-	b.WriteString(pad.Render(labelStyle.Render("folder  ")+valueStyle.Render(orDash(m.launchDir))) + "\n")
-	b.WriteString(pad.Render(dimStyle.Render("Claude Code has no history for this folder.")) + "\n\n")
+	b.WriteString(titleStyle.Render("ccss — where do you want to start?") + "\n\n")
 
-	if n := len(m.curProjects); n > 0 {
-		b.WriteString(pad.Render(fmt.Sprintf("Show all %s instead?  (%s on disk)",
-			plural(n, "project"), humanSize(TotalProjectSize(m.curProjects)))) + "\n")
+	// This folder.
+	key, detail := valueStyle.Render("t"), ""
+	if m.hasLaunch {
+		detail = fmt.Sprintf("%s · %s",
+			plural(m.launchProj.NumSess, "session"), humanSize(m.launchProj.SizeBytes))
 	} else {
-		b.WriteString(pad.Render(dimStyle.Render("There are no Claude Code sessions anywhere on this machine yet.")) + "\n")
+		key = dimStyle.Render("–")
+		detail = "no Claude Code sessions in this folder"
 	}
-	b.WriteString("\n" + footerStyle.Render(m.fitKeys(
-		"y show all projects · n quit · esc quit",
-		"y all · n quit",
-	)))
+	b.WriteString(pad.Render(key+"  "+labelStyle.Render("this folder   ")+valueStyle.Render(orDash(m.launchDir))) + "\n")
+	b.WriteString(pad.Render("   "+labelStyle.Render("              ")+dimStyle.Render(detail)) + "\n\n")
+
+	// Everything.
+	all := "nothing recorded yet"
+	if n := len(m.curProjects); n > 0 {
+		all = fmt.Sprintf("%s · %s", plural(n, "project"), humanSize(TotalProjectSize(m.curProjects)))
+	}
+	b.WriteString(pad.Render(valueStyle.Render("a")+"  "+labelStyle.Render("all projects  ")+dimStyle.Render(all)) + "\n\n")
+
+	// Don't offer "t" when there is nothing for it to open.
+	if m.hasLaunch {
+		b.WriteString(footerStyle.Render(m.fitKeys(
+			"t this folder · a all projects · enter this folder · q quit",
+			"t this folder · a all · q quit",
+		)))
+	} else {
+		b.WriteString(footerStyle.Render(m.fitKeys(
+			"a all projects · enter all projects · q quit",
+			"a all projects · q quit",
+		)))
+	}
 	return b.String()
 }

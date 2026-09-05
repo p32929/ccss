@@ -64,104 +64,154 @@ func drain(cmd tea.Cmd) []tea.Msg {
 	}
 }
 
-func TestStartupInFolderWithSessionsOpensThem(t *testing.T) {
+func TestStartAlwaysAsks(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	seedProject(t, home, "/tmp/hasone")
 	seedProject(t, home, "/tmp/other")
 
+	// Even when the folder has history, it asks instead of jumping straight in.
 	m := boot(t, "/tmp/hasone")
-	if m.state != viewSessions {
-		t.Fatalf("state = %v, want sessions", m.state)
+	if m.state != viewStart {
+		t.Fatalf("state = %v, want the start chooser", m.state)
 	}
-	if m.curProject.RealPath != "/tmp/hasone" {
-		t.Errorf("opened %q, want /tmp/hasone", m.curProject.RealPath)
-	}
-	if len(m.curSessions) != 1 {
-		t.Errorf("%d sessions loaded, want 1", len(m.curSessions))
+	if !m.hasLaunch || m.launchProj.RealPath != "/tmp/hasone" {
+		t.Errorf("launch project = %+v, want /tmp/hasone", m.launchProj)
 	}
 	out := stripANSI(m.View())
-	if !strings.Contains(out, "/tmp/hasone") || !strings.Contains(out, "a prompt from /tmp/hasone") {
-		t.Errorf("did not land on the right project:\n%s", out)
-	}
-	// esc still steps out to the full list.
-	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	if mm.(model).state != viewProjects {
-		t.Error("esc from the auto-opened project did not reach the projects list")
-	}
-}
-
-func TestStartupInFolderWithoutSessionsAsks(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	seedProject(t, home, "/tmp/elsewhere")
-
-	m := boot(t, "/tmp/nothing-here")
-	if m.state != viewNoSessionsHere {
-		t.Fatalf("state = %v, want the ask screen", m.state)
-	}
-	out := stripANSI(m.View())
-	t.Logf("ASK\n%s", out)
-	for _, want := range []string{"No Claude Code sessions here", "/tmp/nothing-here", "Show all 1 project", "y show all projects", "n quit"} {
+	t.Logf("WITH SESSIONS\n%s", out)
+	for _, want := range []string{"where do you want to start", "this folder", "/tmp/hasone", "1 session", "all projects", "2 projects", "t this folder", "a all projects", "q quit"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("ask screen missing %q", want)
+			t.Errorf("chooser missing %q", want)
 		}
 	}
 }
 
-func TestAskScreenYesShowsAll(t *testing.T) {
+func TestStartSaysWhenFolderHasNoSessions(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	seedProject(t, home, "/tmp/elsewhere")
-	m := boot(t, "/tmp/nothing-here")
 
-	for _, yes := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune("y")},
-		{Type: tea.KeyEnter},
-	} {
-		mm, cmd := m.handleKey(yes)
-		got := mm.(model)
-		if got.state != viewProjects {
-			t.Errorf("%v did not open the projects list", yes)
+	m := boot(t, "/tmp/nothing-here")
+	if m.state != viewStart {
+		t.Fatalf("state = %v, want the start chooser", m.state)
+	}
+	if m.hasLaunch {
+		t.Error("claimed the empty folder has a project")
+	}
+	out := stripANSI(m.View())
+	t.Logf("WITHOUT SESSIONS\n%s", out)
+	for _, want := range []string{"/tmp/nothing-here", "no Claude Code sessions in this folder", "all projects", "1 project"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chooser missing %q", want)
 		}
-		if cmd != nil {
-			if _, quit := cmd().(tea.QuitMsg); quit {
-				t.Errorf("%v quit instead of showing all", yes)
-			}
-		}
-		if out := stripANSI(got.View()); !strings.Contains(out, "/tmp/elsewhere") {
-			t.Errorf("projects list not shown:\n%s", out)
-		}
+	}
+	// The default shifts to the only thing worth showing, and the key that has
+	// nothing to open is not advertised.
+	if !strings.Contains(out, "enter all projects") {
+		t.Errorf("enter should default to all projects here:\n%s", out)
+	}
+	if strings.Contains(out, "t this folder") {
+		t.Errorf("footer offers t with nothing to open:\n%s", out)
 	}
 }
 
-func TestAskScreenNoQuits(t *testing.T) {
+func TestStartTOpensThisFolder(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	seedProject(t, home, "/tmp/elsewhere")
-	m := boot(t, "/tmp/nothing-here")
+	seedProject(t, home, "/tmp/hasone")
+	seedProject(t, home, "/tmp/other")
+	m := boot(t, "/tmp/hasone")
 
 	for _, k := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune("n")},
+		{Type: tea.KeyRunes, Runes: []rune("t")},
+		{Type: tea.KeyEnter},
+	} {
+		mm, cmd := m.handleKey(k)
+		got := mm.(model)
+		for _, sub := range drain(cmd) {
+			if sm, ok := sub.(sessionsLoadedMsg); ok {
+				g, _ := got.Update(sm)
+				got = g.(model)
+			}
+		}
+		if got.state != viewSessions {
+			t.Errorf("%v did not open the folder's sessions (state %v)", k, got.state)
+		}
+		if got.curProject.RealPath != "/tmp/hasone" {
+			t.Errorf("%v opened %q", k, got.curProject.RealPath)
+		}
+	}
+}
+
+func TestStartAOpensAllProjects(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedProject(t, home, "/tmp/hasone")
+	seedProject(t, home, "/tmp/other")
+	m := boot(t, "/tmp/hasone")
+
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	got := mm.(model)
+	if got.state != viewProjects {
+		t.Fatalf("a did not open the projects list (state %v)", got.state)
+	}
+	out := stripANSI(got.View())
+	if !strings.Contains(out, "/tmp/hasone") || !strings.Contains(out, "/tmp/other") {
+		t.Errorf("projects list incomplete:\n%s", out)
+	}
+}
+
+func TestStartEnterFallsBackToAllWhenFolderEmpty(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedProject(t, home, "/tmp/elsewhere")
+	m := boot(t, "/tmp/nothing-here")
+
+	mm, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := mm.(model).state; got != viewProjects {
+		t.Errorf("enter went to %v, want the projects list", got)
+	}
+	for _, sub := range drain(cmd) {
+		if _, quit := sub.(tea.QuitMsg); quit {
+			t.Error("enter quit the app")
+		}
+	}
+	// "t" has nothing to open, so it must do nothing rather than misfire.
+	mm, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if got := mm.(model).state; got != viewStart {
+		t.Errorf("t moved to %v even though the folder has no sessions", got)
+	}
+}
+
+func TestStartQuits(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedProject(t, home, "/tmp/hasone")
+	m := boot(t, "/tmp/hasone")
+
+	for _, k := range []tea.KeyMsg{
 		{Type: tea.KeyRunes, Runes: []rune("q")},
 		{Type: tea.KeyEsc},
 	} {
 		_, cmd := m.handleKey(k)
-		if cmd == nil {
-			t.Errorf("%v did not quit", k)
-			continue
+		quit := false
+		for _, sub := range drain(cmd) {
+			if _, ok := sub.(tea.QuitMsg); ok {
+				quit = true
+			}
 		}
-		if _, quit := cmd().(tea.QuitMsg); !quit {
+		if !quit {
 			t.Errorf("%v did not quit", k)
 		}
 	}
 }
 
-func TestAskScreenIgnoresStrayKeys(t *testing.T) {
+func TestStartIgnoresStrayKeys(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	seedProject(t, home, "/tmp/elsewhere")
-	m := boot(t, "/tmp/nothing-here")
+	seedProject(t, home, "/tmp/hasone")
+	m := boot(t, "/tmp/hasone")
 
 	for _, k := range []tea.KeyMsg{
 		{Type: tea.KeyRunes, Runes: []rune("x")},
@@ -169,33 +219,56 @@ func TestAskScreenIgnoresStrayKeys(t *testing.T) {
 		{Type: tea.KeyRunes, Runes: []rune("d")},
 	} {
 		mm, cmd := m.handleKey(k)
-		if got := mm.(model).state; got != viewNoSessionsHere {
-			t.Errorf("%v moved off the ask screen to %v", k, got)
+		if got := mm.(model).state; got != viewStart {
+			t.Errorf("%v moved off the chooser to %v", k, got)
 		}
-		if cmd != nil {
-			if _, quit := cmd().(tea.QuitMsg); quit {
+		for _, sub := range drain(cmd) {
+			if _, quit := sub.(tea.QuitMsg); quit {
 				t.Errorf("%v quit the app", k)
 			}
 		}
 	}
 }
 
-func TestStartupWithNoSessionsAnywhere(t *testing.T) {
+func TestStartWithNoSessionsAnywhere(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	m := boot(t, "/tmp/nothing-here")
-	if m.state != viewNoSessionsHere {
-		t.Fatalf("state = %v, want the ask screen", m.state)
+	if m.state != viewStart {
+		t.Fatalf("state = %v, want the start chooser", m.state)
 	}
 	out := stripANSI(m.View())
-	t.Logf("EMPTY\n%s", out)
-	if !strings.Contains(out, "no Claude Code sessions anywhere") {
+	t.Logf("NOTHING ANYWHERE\n%s", out)
+	if !strings.Contains(out, "no Claude Code sessions in this folder") {
+		t.Error("should say this folder is empty")
+	}
+	if !strings.Contains(out, "nothing recorded yet") {
 		t.Errorf("should say there is nothing anywhere:\n%s", out)
 	}
-	// Saying yes must still render, not panic on an empty list.
-	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-	_ = mm.(model).View()
+	mm, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	_ = mm.(model).View() // empty list must still render
+}
+
+func TestSessionsScreenStillReachesAllProjects(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	seedProject(t, home, "/tmp/hasone")
+	seedProject(t, home, "/tmp/other")
+	m := boot(t, "/tmp/hasone")
+
+	mm, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	m = mm.(model)
+	for _, sub := range drain(cmd) {
+		if sm, ok := sub.(sessionsLoadedMsg); ok {
+			g, _ := m.Update(sm)
+			m = g.(model)
+		}
+	}
+	mm, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if got := mm.(model).state; got != viewProjects {
+		t.Errorf("esc from sessions went to %v, want the projects list", got)
+	}
 }

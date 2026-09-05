@@ -2,46 +2,75 @@
 
 Browse your Claude Code sessions and get the exact command to resume any of them.
 
-```
-   Sessions in /Users/you/dev/app
-
- │ add loading spinner and all resume modes
- │ 0f8e2a91 · 185 msgs · 4h ago · 444.3KB
-
-   remember the last selected resume mode across runs
-   0f8e2a91 · 148 msgs · 3h ago · 355.5KB
-
- sort: recent · filter: off · 5 sessions · on disk: 1.4MB
- resume:  claude --resume 0f8e2a91-4c3d-4b7a-9e11-aa22bb33cc44
- mode: normal — permissions work normally (asks before acting)
- ↑/↓ move · enter read · c copy · m mode · s sort · / filter · d delete · esc back · q quit
-```
+<!-- Sessions list. See screenshots/README.md for what to capture. -->
+![The sessions list, showing each session's first prompt, size and resume command](screenshots/sessions.png)
 
 ---
 
 ## Install
 
-**1. Install it** (needs [Go](https://go.dev/dl/) 1.21+)
+Needs [Go](https://go.dev/dl/) 1.21+.
+
+### Option A — one command
 
 ```bash
 go install github.com/p32929/ccss@latest
 ```
 
-**2. Check it's on your PATH**
+### Option B — from source
+
+**1. Clone the repo**
+
+```bash
+git clone https://github.com/p32929/ccss.git
+```
+
+**2. Go into it**
+
+```bash
+cd ccss
+```
+
+**3. Run the script**
+
+```bash
+./run.sh
+```
+
+That builds it, installs `ccss` globally, and starts it — all in one step. From then on you can just type `ccss` anywhere.
+
+`run.sh` always starts the app in the folder *you* ran it from, not in the repo, so you still land on your own project's sessions.
+
+### Then — make sure it's on your PATH
+
+**1. Check**
 
 ```bash
 command -v ccss || echo "not on PATH"
 ```
 
-**3. If it said `not on PATH`, add Go's bin directory**
+If it prints a path, you're done.
+
+**2. If it said `not on PATH`, add Go's bin directory**
 
 ```bash
 echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.zshrc && source ~/.zshrc
 ```
 
-Use `~/.bashrc` if you're on bash.
+Use `~/.bashrc` if you're on bash. `run.sh` prints this same line for you if the folder isn't on your PATH.
 
-Update with the same install command. Uninstall with `rm "$(go env GOPATH)/bin/ccss"`.
+**3. Check again**
+
+```bash
+command -v ccss
+```
+
+### Updating and uninstalling
+
+| | Option A | Option B (source) |
+|---|---|---|
+| Update | `go install github.com/p32929/ccss@latest` | `git pull && ./run.sh` |
+| Uninstall | `rm "$(go env GOPATH)/bin/ccss"` | `rm "$(go env GOPATH)/bin/ccss"` and delete the clone |
 
 ---
 
@@ -54,25 +83,49 @@ cd ~/dev/my-app
 ccss
 ```
 
-You land straight on that project's sessions.
+**2. Choose where to start**
 
-**2. If the folder has no sessions, it asks**
+It always asks, so you're never guessing which list you're looking at:
 
 ```
- No Claude Code sessions here
+ ccss — where do you want to start?
 
- folder  /Users/you/scratch
+ t  this folder   /Users/you/dev/my-app
+                  5 sessions · 1.4MB
 
- Show all 12 projects instead?  (4.2GB on disk)
+ a  all projects  12 projects · 4.2GB
 
- y show all projects · n quit · esc quit
+ t this folder · a all projects · enter this folder · q quit
 ```
 
-`y` shows everything, `n` quits. From a project, `esc` gets you to the full list too.
+<!-- The start chooser. -->
+![The start screen, offering this folder's sessions or all projects](screenshots/start.png)
+
+- **`t`** — just this folder's sessions
+- **`a`** — every project you've used Claude Code in
+- **`enter`** — takes the obvious one (this folder)
+- **`q`** — quit
+
+If the folder has no history, it says so, and `t` isn't offered:
+
+```
+ –  this folder   /Users/you/scratch
+                  no Claude Code sessions in this folder
+
+ a  all projects  12 projects · 4.2GB
+
+ a all projects · enter all projects · q quit
+```
+
+<!-- The start chooser when the folder has no sessions. -->
+![The start screen saying this folder has no sessions](screenshots/start-empty.png)
 
 **3. Pick a session**
 
 `↑`/`↓` to move, `/` to filter, `s` to re-sort, `enter` to read the transcript.
+
+<!-- A conversation: prompts, replies, thinking, tool calls. -->
+![A session transcript with the current prompt pinned at the top](screenshots/transcript.png)
 
 **4. Copy the command**
 
@@ -127,6 +180,9 @@ Both lists show sizes, and `s` sorts by `size` to put the biggest first.
 ```
 delete ALL 24 sessions (1.2GB) in /Users/you/dev/app? this cannot be undone — y to delete, any other key cancels
 ```
+
+<!-- The red confirmation footer. -->
+![The delete confirmation shown in the footer](screenshots/delete.png)
 
 Only `y` goes through; every other key cancels.
 
